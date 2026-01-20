@@ -1,52 +1,35 @@
 import pandas as pd
 import os
 from sqlalchemy import create_engine, text
-from sqlalchemy.pool import NullPool
 
-# Connection to your Docker Postgres on port 5433
-DB_URL = "postgresql://admin:admin@localhost:5433/olist_db"
+# ... (keep your existing create_database_if_not_exists code here) ...
+
+# Paths
 raw_data_path = 'data/raw/'
+parquet_output_path = 'data/parquet/'
 
-def create_database_if_not_exists():
-    """Create the database if it doesn't exist"""
-    # Connect to the default postgres database with autocommit
-    default_url = "postgresql://admin:admin@localhost:5433/postgres"
-    temp_engine = create_engine(default_url, poolclass=NullPool, isolation_level="AUTOCOMMIT")
+# Create parquet folder if it doesn't exist
+os.makedirs(parquet_output_path, exist_ok=True)
+
+def ingest_to_postgres_and_parquet():
+    engine = create_engine("postgresql://admin:admin@localhost:5433/olist_db")
     
-    try:
-        with temp_engine.connect() as connection:
-            # Check if database exists
-            result = connection.execute(
-                text("SELECT 1 FROM pg_database WHERE datname = 'olist_db'")
-            )
-            if not result.fetchone():
-                # Create database if it doesn't exist
-                connection.execute(text("CREATE DATABASE olist_db"))
-                print("✅ Database 'olist_db' created successfully!")
-            else:
-                print("ℹ️  Database 'olist_db' already exists.")
-    except Exception as e:
-        print(f"Note: Could not check/create database: {e}")
-    finally:
-        temp_engine.dispose()
-
-# Create database and then set up the main engine
-create_database_if_not_exists()
-engine = create_engine(DB_URL)
-
-def ingest():
-    if not os.path.exists(raw_data_path):
-        print(f"Error: Folder {raw_data_path} not found!")
-        return
-
     for file in os.listdir(raw_data_path):
         if file.endswith(".csv"):
             table_name = file.replace("_dataset.csv", "").replace(".csv", "")
-            print(f"🚀 Importing {file}...")
+            print(f"📦 Processing {table_name}...")
             
+            # Read CSV
             df = pd.read_csv(os.path.join(raw_data_path, file))
+            
+            # 1. Push to Postgres (Bronze Local)
             df.to_sql(table_name, engine, if_exists='replace', index=False)
-            print(f"✅ Table '{table_name}' created.")
+            
+            # 2. Save as Parquet for Databricks
+            df.to_parquet(os.path.join(parquet_output_path, f"{table_name}.parquet"), index=False)
+            
+    print(f"\n✅ Done! Files saved to {parquet_output_path}")
 
 if __name__ == "__main__":
-    ingest()
+    # Ensure you have 'pyarrow' installed: pip install pyarrow
+    ingest_to_postgres_and_parquet()
